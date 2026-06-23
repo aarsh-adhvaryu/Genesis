@@ -34,11 +34,25 @@ python -m genesis.train          # train the PPO slice and WATCH greedy success 
 11×11 maps greedy success climbs to ~95% in ~30s; learning curve + trajectory render to `runs/`
 (gitignored). Confirmed to scale to 32×32 (slower — sparse reward, which the curriculum addresses).
 
-**Factored primitive action interface (in progress).** Action = (primitive 0–12, direction 0–3)
-with a two-head policy and budget masking. Implemented so far: **P0 Idle, P1 Motor, P5 Gradient
-Step**; the remaining primitives (P2 wall-follow, P3/P4 frontier, P6/P7/P9 memory, P8 sensor, P10
-scout, P11 commit, P12 subgoal) are masked off until their subsystems are built.
+**Factored primitive action interface — 10 of 13 primitives live.** Action = (primitive 0–12,
+direction 0–3) with a two-head policy and budget masking; a primitive is masked unless implemented
+and affordable (P0 always legal). Implemented and unit-tested:
 
-**Not yet built:** the remaining primitives + their subsystems (memory K=16, frontier, fog,
-forward-sim), richer observation, and the PAIRED adversarial curriculum. See the roadmap and
-`CLAUDE.md` for the current build status and next units.
+| | Primitive | What it does |
+|---|---|---|
+| P0 | Idle | pass a tick (cost 0) |
+| P1 | Motor | step in the chosen direction |
+| P2 | Wall Follow | right-hand rule (uses a `heading`) |
+| P3 | Graph Node Expand | A\* best-first frontier expansion (abstract; agent doesn't move) |
+| P4 | Frontier Sample | RRT random frontier expansion |
+| P5 | Gradient Step | greedy step toward the current target |
+| P6 / P7 / P9 | Memory | write / read-cursor / backtrack over a K=16 waypoint ring |
+| P12 | Subgoal Set | push a direction-strided subgoal (`goal_stack`) |
+
+Each primitive is tested independently; on easy maps the controller still learns to ~94% (it leans
+on P5 and ignores the heavier primitives, whose payoff is for hard mazes under the curriculum).
+
+**Not yet built:** **P8** Sensor Burst (needs fog / partial observability — a Dimension-3 env
+feature), **P10** Scout Fork and **P11** Commit Path (both multi-step), richer LiDAR/occupancy
+observation, and the **PAIRED** adversarial curriculum. See the roadmap and `CLAUDE.md` for the
+current build status and next units.
