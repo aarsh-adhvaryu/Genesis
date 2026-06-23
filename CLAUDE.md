@@ -64,12 +64,14 @@ learns, THEN thicken (more primitives, full obs, energy budget, PAIRED).
 - [x] **#2 memory primitives P6/P7/P9:** `SearchState` gains FIFO ring `memory_buffer` (K=16) +
   `mem_head/mem_count/mem_cursor`; P6 write, P7 read-cursor (advances which waypoint is surfaced),
   P9 backtrack=teleport to cursor-selected waypoint; obs surfaces selected waypoint (rel+flag).
-  Implemented now: P0,P1,P5,P6,P7,P9. Slice learns 2.3%->95.5%. 26 tests pass.
   (P7 semantics = read-cursor is OUR interpretation of "retrieve"; flag if you want plain newest-read.)
-- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P2 wall-follow
-  (no new state), P3/P4 frontier (needs frontier+visited set), P8 fog/LiDAR (needs partial obs),
-  P10 scout (multi-step sim), P11 commit (stored path), P12 subgoal (goal_stack). Then **#4 PAIRED**
-  (Antagonist+Adversary, regret). Scale to 32x32.
+- [x] **#2 P2 wall-follow:** `SearchState.heading` (0..3) added; right-hand rule (try right/straight/
+  left/back, first open; updates heading); turn tables `_RIGHT/_LEFT/_BACK` in primitives.py.
+  Implemented now: P0,P1,P2,P5,P6,P7,P9. Slice learns 2.1%->94.1%. 29 tests pass.
+- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P3/P4 frontier
+  (needs frontier+visited set), P8 fog/LiDAR (needs partial obs), P10 scout (multi-step sim), P11
+  commit (stored path), P12 subgoal (goal_stack). Then **#4 PAIRED** (Antagonist+Adversary, regret).
+  Scale to 32x32.
 
 ## Stage 1 build order (one unit at a time; math first, then code; confirm each before next)
 1. **Scaffold** `~/Genesis`: `pyproject.toml` (py3.12, ruff/pytest), `.gitignore` (.venv, __pycache__,

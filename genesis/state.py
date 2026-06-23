@@ -31,6 +31,7 @@ class SearchState:
     mem_head: chex.Array      # ()    int32   — ring write index (next slot to write)
     mem_count: chex.Array     # ()    int32   — number of valid waypoints (saturates at K)
     mem_cursor: chex.Array    # ()    int32   — read offset from newest (0=newest); P7 advances it
+    heading: chex.Array       # ()    int32   — agent facing dir (0=up,1=down,2=left,3=right) for P2
     step_count: chex.Array    # ()    int32   — steps taken this episode (drives max_steps timeout)
     done: chex.Array          # ()    bool_   — episode finished (reached goal or timed out)
     key: chex.Array           # (2,)  uint32  — per-episode PRNG key (reproducible, vmap-independent)

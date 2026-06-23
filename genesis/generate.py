@@ -111,6 +111,7 @@ def _build(key: jax.Array, cfg: EnvConfig, wall_density: jax.Array) -> SearchSta
         mem_head=jnp.int32(0),
         mem_count=jnp.int32(0),
         mem_cursor=jnp.int32(0),
+        heading=jnp.int32(0),               # face "up" initially (P2 wall-follow updates it)
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=key,

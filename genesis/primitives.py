@@ -36,10 +36,16 @@ PRIMITIVE_COST = jnp.array(
 # which primitives move the agent into a grid cell (pay the dynamic traversal multiplier)
 _IS_MOVE = jnp.array([0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0], dtype=bool)
 # which are implemented right now (others are masked out of the action distribution)
-IMPLEMENTED = jnp.array([1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0], dtype=bool)  # P0,P1,P5,P6,P7,P9
+IMPLEMENTED = jnp.array([1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0], dtype=bool)  # P0,P1,P2,P5,P6,P7,P9
 
-P0_IDLE, P1_MOTOR, P5_GRADIENT = 0, 1, 5
+P0_IDLE, P1_MOTOR, P2_WALLFOLLOW, P5_GRADIENT = 0, 1, 2, 5
 P6_WRITE, P7_READ, P9_BACKTRACK = 6, 7, 9
+
+# Right-hand-rule turn tables, indexed by heading (0=up,1=down,2=left,3=right).
+# A right turn (clockwise on screen) cycles up->right->down->left->up.
+_RIGHT = jnp.array([3, 2, 0, 1], dtype=jnp.int32)   # turn right
+_LEFT = jnp.array([2, 3, 1, 0], dtype=jnp.int32)    # turn left
+_BACK = jnp.array([1, 0, 3, 2], dtype=jnp.int32)    # reverse
 
 
 def _greedy_direction(state: SearchState, cfg: EnvConfig) -> jax.Array:
@@ -52,6 +58,22 @@ def _greedy_direction(state: SearchState, cfg: EnvConfig) -> jax.Array:
     return jnp.argmin(dist).astype(jnp.int32)
 
 
+def _wall_follow(state: SearchState, cfg: EnvConfig):
+    """P2's right-hand rule. Returns (chosen_abs_direction, can_move).
+
+    Try directions in priority order [right-turn, straight, left-turn, back]; take the first open
+    one. can_move is False only if fully enclosed (no open neighbor).
+    """
+    h = state.heading
+    cand = jnp.stack([_RIGHT[h], h, _LEFT[h], _BACK[h]])             # (4,) abs dirs, priority order
+    dests = jnp.clip(state.agent_pos + DELTAS[cand],
+                     jnp.array([0, 0]), jnp.array([cfg.height - 1, cfg.width - 1]))
+    is_free = state.grid[dests[:, 0], dests[:, 1]] != WALL          # (4,)
+    # pick the FIRST free candidate: weight by descending priority, argmax
+    chosen = jnp.argmax(is_free.astype(jnp.int32) * jnp.array([4, 3, 2, 1]))
+    return cand[chosen], is_free.any()
+
+
 def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cfg: EnvConfig):
     """Apply one primitive (branchless). Updates agent_pos / visit_counts / energy / memory.
 
@@ -62,14 +84,18 @@ def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cf
     p = state.agent_pos
 
     # --- destination by primitive type ---
+    wf_dir, wf_can = _wall_follow(state, cfg)                    # P2 wall-follow direction
     move_dir = jnp.where(pid == P1_MOTOR, direction,
-                         jnp.where(pid == P5_GRADIENT, _greedy_direction(state, cfg), jnp.int32(0)))
-    p_grid = _dest_cell(p, move_dir, state.grid, cfg)            # P1/P5 step destination
-    sel_pos, has_mem = selected_waypoint(state, K)               # P9 teleport target
-    is_grid_move = (pid == P1_MOTOR) | (pid == P5_GRADIENT)
+               jnp.where(pid == P5_GRADIENT, _greedy_direction(state, cfg),
+               jnp.where(pid == P2_WALLFOLLOW, wf_dir, jnp.int32(0))))
+    p_grid = _dest_cell(p, move_dir, state.grid, cfg)           # P1/P2/P5 step destination
+    sel_pos, has_mem = selected_waypoint(state, K)              # P9 teleport target
+    is_grid_move = (pid == P1_MOTOR) | (pid == P5_GRADIENT) | ((pid == P2_WALLFOLLOW) & wf_can)
     is_backtrack = pid == P9_BACKTRACK
     p_next = jnp.where(is_grid_move, p_grid, jnp.where(is_backtrack & has_mem, sel_pos, p))
     is_move = is_grid_move | (is_backtrack & has_mem)           # backtrack moves only if memory exists
+    # P2 updates the heading to the direction it actually stepped
+    new_heading = jnp.where((pid == P2_WALLFOLLOW) & wf_can, wf_dir, state.heading)
 
     # --- energy cost: movers scale by (1+visit_count[dest]); others flat ---
     vc_before = state.visit_counts[p_next[0], p_next[1]].astype(jnp.float32)
@@ -96,6 +122,7 @@ def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cf
     return state.replace(
         agent_pos=p_next, visit_counts=visit_counts, energy=state.energy - cost,
         memory_buffer=new_buffer, mem_head=new_head, mem_count=new_count, mem_cursor=new_cursor,
+        heading=new_heading,
     )
 
 

@@ -16,7 +16,7 @@ cfg = EnvConfig(height=11, width=11)
 H, W = cfg.height, cfg.width
 
 
-def _state(agent, goal, energy=None, grid=None):
+def _state(agent, goal, energy=None, grid=None, heading=0):
     g = jnp.ones((H, W), jnp.int8).at[1:-1, 1:-1].set(0) if grid is None else grid
     g = g.at[goal[0], goal[1]].set(2)
     return SearchState(
@@ -25,6 +25,7 @@ def _state(agent, goal, energy=None, grid=None):
         energy=jnp.float32(cfg.b0 if energy is None else energy),
         memory_buffer=-jnp.ones((cfg.memory_k, 2), jnp.int32),
         mem_head=jnp.int32(0), mem_count=jnp.int32(0), mem_cursor=jnp.int32(0),
+        heading=jnp.int32(heading),
         step_count=jnp.int32(0), done=jnp.bool_(False), key=jax.random.PRNGKey(0),
     )
 
@@ -107,3 +108,26 @@ def test_p7_read_cursor_cycles_to_older_waypoint():
     s = P.apply_primitive(s, jnp.int32(P.P7_READ), jnp.int32(0), cfg)    # advance cursor
     sel1, _ = selected_waypoint(s, cfg.memory_k)
     assert tuple(np.asarray(sel1)) == (1, 1)                  # now older (A)
+
+
+# --------------------------------------------------------------------------- P2 wall-follow
+def test_p2_turns_right_in_open_space_and_updates_heading():
+    s = _state((5, 5), (8, 8), heading=0)                    # facing up; right-of-up = east
+    ns = P.apply_primitive(s, jnp.int32(P.P2_WALLFOLLOW), jnp.int32(0), cfg)
+    assert tuple(np.asarray(ns.agent_pos)) == (5, 6)         # stepped east (right turn)
+    assert int(ns.heading) == 3                              # now facing right
+    assert float(s.energy - ns.energy) == float(P.PRIMITIVE_COST[P.P2_WALLFOLLOW])
+
+
+def test_p2_goes_straight_when_right_is_blocked():
+    g = jnp.ones((H, W), jnp.int8).at[1:-1, 1:-1].set(0)
+    g = g.at[5, 6].set(1)                                    # wall to the east (the "right" of up)
+    s = _state((5, 5), (8, 8), grid=g, heading=0)
+    ns = P.apply_primitive(s, jnp.int32(P.P2_WALLFOLLOW), jnp.int32(0), cfg)
+    assert tuple(np.asarray(ns.agent_pos)) == (4, 5)         # can't turn right -> go straight (up)
+    assert int(ns.heading) == 0                              # still facing up
+
+
+def test_p2_is_implemented_in_mask():
+    s = _state((5, 5), (8, 8))
+    assert bool(np.asarray(P.action_mask(s, cfg))[P.P2_WALLFOLLOW])
