@@ -10,6 +10,7 @@ __pycache__/
 # Experiment tracking / artifacts
 wandb/
 *.npz
+runs/
 
 # Editor / OS
 .DS_Store

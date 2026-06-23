@@ -49,11 +49,17 @@ learns, THEN thicken (more primitives, full obs, energy budget, PAIRED).
   the slice. When a "nice to have" would delay the watchable loop, defer it and note it.
 
 ## Current status / where to start
-- [x] Plan approved. [x] GPU + toolchain verified. [x] **Foundations run** (`setup_wsl.sh`: venv
-  rebuilt, GPU smoke test `GPU OK`, purejaxrl cloned, docs re-imported, 2026-06-21).
-- [x] Scaffold + `config.py` (`EnvConfig`, frozen/hashable, reward-scaling assertion) done & verified.
-- **Resume here:** continue the slice — next unit is `state.py` (`SearchState` pytree), then
-  `generate.py`, `env.py`, then jump to the minimal PPO loop to reach the watchable signal.
+- [x] Plan approved. [x] GPU + toolchain verified. [x] **Foundations run** (venv, `GPU OK`, 2026-06-21).
+- [x] **Stage 1 env core complete & tested:** `config`, `state`, `generate` (BFS flood-fill,
+  0/2000 unsolvable vs independent BFS), `env` (reset/step/obs), 13 pytest tests, `bench` (1024
+  envs -> 4.8M steps/sec). GPU calib `XLA_PYTHON_CLIENT_PREALLOCATE=false` (WSL/WDDM).
+- [x] **WATCHABLE SLICE ACHIEVED (2026-06-23):** `network` (MLP actor-critic), `rollout`+GAE,
+  `ppo` (clipped loss), `train` driver, `render`. On 11x11 easy maps greedy success climbs
+  **4.5% -> 73%** in ~32s/300 updates; curve + trajectory saved to `runs/` (gitignored).
+- **Resume here — THICKEN the slice** toward the real system (each was deferred until the slice
+  worked): widen the action interface toward the 13 primitives, add the energy budget + dynamic
+  traversal cost, richer observation, then PAIRED. Scale env back up to 32x32. Keep math-first,
+  one unit at a time, confirm each.
 
 ## Stage 1 build order (one unit at a time; math first, then code; confirm each before next)
 1. **Scaffold** `~/Genesis`: `pyproject.toml` (py3.12, ruff/pytest), `.gitignore` (.venv, __pycache__,
