@@ -1,0 +1,17 @@
+# Python virtual environment (large; recreated via setup_wsl.sh)
+.venv/
+
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Experiment tracking / artifacts
+wandb/
+*.npz
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
