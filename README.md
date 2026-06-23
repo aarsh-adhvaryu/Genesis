@@ -18,13 +18,27 @@ Native Python 3.12 in a WSL2 (Ubuntu-24.04) venv.
 ## Setup
 ```bash
 source .venv/bin/activate        # deps pinned in requirements.lock.txt
-python -m pytest                 # run tests
-python -m genesis.bench          # throughput benchmark
+                                 # (sets XLA_PYTHON_CLIENT_PREALLOCATE=false for the WSL/WDDM GPU)
+python -m pytest                 # run the test suite (env + primitives)
+python -m genesis.bench          # env throughput benchmark
+python -m genesis.train          # train the PPO slice and WATCH greedy success climb -> runs/
 ```
 
 ## Status
-**Stage 1 — Environment Core** (in progress): JAX-native 2D grid-world with solvable-by-
-construction grids (BFS flood-fill), minimal 4-direction motor, jit + vmap, tests, benchmark.
 
-Later stages (not yet built): resource systems, the 13 primitives, full observation, PPO,
-PAIRED. See the roadmap's build sequence.
+**Environment core — complete & tested.** JAX-native 2D grid world (jit + vmap, ~4.8M steps/sec at
+1024 envs): solvable-by-construction grids (BFS flood-fill, 0 unsolvable vs. an independent BFS),
+`reset`/`step`/`obs`, energy budget + dynamic traversal cost `base·(1+visit_count)`.
+
+**Watchable PPO slice — working.** Equinox MLP actor-critic, rollout + GAE, clipped PPO. On easy
+11×11 maps greedy success climbs to ~95% in ~30s; learning curve + trajectory render to `runs/`
+(gitignored). Confirmed to scale to 32×32 (slower — sparse reward, which the curriculum addresses).
+
+**Factored primitive action interface (in progress).** Action = (primitive 0–12, direction 0–3)
+with a two-head policy and budget masking. Implemented so far: **P0 Idle, P1 Motor, P5 Gradient
+Step**; the remaining primitives (P2 wall-follow, P3/P4 frontier, P6/P7/P9 memory, P8 sensor, P10
+scout, P11 commit, P12 subgoal) are masked off until their subsystems are built.
+
+**Not yet built:** the remaining primitives + their subsystems (memory K=16, frontier, fog,
+forward-sim), richer observation, and the PAIRED adversarial curriculum. See the roadmap and
+`CLAUDE.md` for the current build status and next units.
