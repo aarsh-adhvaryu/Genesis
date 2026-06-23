@@ -60,11 +60,16 @@ learns, THEN thicken (more primitives, full obs, energy budget, PAIRED).
   motivates curriculum). [x] **#3 (budget+cost):** `energy` in state, dynamic cost base*(1+visit),
   exhaustion ends episode, `lambda_budget` reward (=0 default), `action_costs`. Slice still learns.
 - [x] **#2 foundation (FACTORED action, Option 1):** action = (primitive 13-way, direction 4-way);
-  two-head `ActorCritic`; budget `action_mask` (P0 always legal); primitives P0/P1/P5 implemented,
-  rest masked off; obs gains budget ratio. Slice learns 15%->96%. 22 tests pass.
-- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P2 wall-follow,
-  P6/P7/P9 memory (needs `memory_buffer` K=16 in state), P3/P4 frontier, P8 fog/LiDAR, P10 scout
-  (multi-step), P11 commit, P12 subgoal. Then **#4 PAIRED** (Antagonist+Adversary, regret). 32x32.
+  two-head `ActorCritic`; budget `action_mask` (P0 always legal); obs gains budget ratio.
+- [x] **#2 memory primitives P6/P7/P9:** `SearchState` gains FIFO ring `memory_buffer` (K=16) +
+  `mem_head/mem_count/mem_cursor`; P6 write, P7 read-cursor (advances which waypoint is surfaced),
+  P9 backtrack=teleport to cursor-selected waypoint; obs surfaces selected waypoint (rel+flag).
+  Implemented now: P0,P1,P5,P6,P7,P9. Slice learns 2.3%->95.5%. 26 tests pass.
+  (P7 semantics = read-cursor is OUR interpretation of "retrieve"; flag if you want plain newest-read.)
+- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P2 wall-follow
+  (no new state), P3/P4 frontier (needs frontier+visited set), P8 fog/LiDAR (needs partial obs),
+  P10 scout (multi-step sim), P11 commit (stored path), P12 subgoal (goal_stack). Then **#4 PAIRED**
+  (Antagonist+Adversary, regret). Scale to 32x32.
 
 ## Stage 1 build order (one unit at a time; math first, then code; confirm each before next)
 1. **Scaffold** `~/Genesis`: `pyproject.toml` (py3.12, ruff/pytest), `.gitignore` (.venv, __pycache__,

@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 from genesis.config import EnvConfig
 from genesis.env import DELTAS, WALL, _dest_cell
-from genesis.state import SearchState
+from genesis.state import SearchState, selected_waypoint
 
 N_PRIMITIVES = 13
 N_DIRECTIONS = 4
@@ -33,12 +33,13 @@ N_DIRECTIONS = 4
 PRIMITIVE_COST = jnp.array(
     [0.0, 1.0, 2.0, 3.0, 3.0, 2.0, 1.0, 1.0, 5.0, 2.0, 8.0, 1.0, 1.0], dtype=jnp.float32
 )
-# which primitives move the agent (pay the dynamic traversal multiplier)
+# which primitives move the agent into a grid cell (pay the dynamic traversal multiplier)
 _IS_MOVE = jnp.array([0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0], dtype=bool)
 # which are implemented right now (others are masked out of the action distribution)
-IMPLEMENTED = jnp.array([1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0], dtype=bool)  # P0, P1, P5
+IMPLEMENTED = jnp.array([1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 0, 0], dtype=bool)  # P0,P1,P5,P6,P7,P9
 
 P0_IDLE, P1_MOTOR, P5_GRADIENT = 0, 1, 5
+P6_WRITE, P7_READ, P9_BACKTRACK = 6, 7, 9
 
 
 def _greedy_direction(state: SearchState, cfg: EnvConfig) -> jax.Array:
@@ -52,22 +53,50 @@ def _greedy_direction(state: SearchState, cfg: EnvConfig) -> jax.Array:
 
 
 def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cfg: EnvConfig):
-    """Apply one primitive. Updates agent_pos / visit_counts / energy. Returns the new SearchState.
+    """Apply one primitive (branchless). Updates agent_pos / visit_counts / energy / memory.
 
-    P1 uses `direction`; P5 uses the greedy-toward-goal direction; P0 does not move.
+    Movement: P1 uses `direction`; P5 the greedy-toward-goal direction; P9 teleports to the selected
+    waypoint. Memory: P6 writes the current position (FIFO ring), P7 advances the read-cursor.
     """
+    K = cfg.memory_k
+    p = state.agent_pos
+
+    # --- destination by primitive type ---
     move_dir = jnp.where(pid == P1_MOTOR, direction,
                          jnp.where(pid == P5_GRADIENT, _greedy_direction(state, cfg), jnp.int32(0)))
-    is_move = _IS_MOVE[pid]
+    p_grid = _dest_cell(p, move_dir, state.grid, cfg)            # P1/P5 step destination
+    sel_pos, has_mem = selected_waypoint(state, K)               # P9 teleport target
+    is_grid_move = (pid == P1_MOTOR) | (pid == P5_GRADIENT)
+    is_backtrack = pid == P9_BACKTRACK
+    p_next = jnp.where(is_grid_move, p_grid, jnp.where(is_backtrack & has_mem, sel_pos, p))
+    is_move = is_grid_move | (is_backtrack & has_mem)           # backtrack moves only if memory exists
 
-    p = state.agent_pos
-    p_next = jnp.where(is_move, _dest_cell(p, move_dir, state.grid, cfg), p)
+    # --- energy cost: movers scale by (1+visit_count[dest]); others flat ---
     vc_before = state.visit_counts[p_next[0], p_next[1]].astype(jnp.float32)
-
     base = PRIMITIVE_COST[pid] * cfg.base_cost
-    cost = jnp.where(is_move, base * (1.0 + vc_before), base)   # movers scale with revisits
+    cost = jnp.where(is_move, base * (1.0 + vc_before), base)
     visit_counts = state.visit_counts.at[p_next[0], p_next[1]].add(is_move.astype(jnp.int32))
-    return state.replace(agent_pos=p_next, visit_counts=visit_counts, energy=state.energy - cost)
+
+    # --- memory updates ---
+    is_read = pid == P7_READ
+    cursor_after_read = jnp.where(
+        is_read & (state.mem_count > 0),
+        (state.mem_cursor + 1) % jnp.maximum(state.mem_count, 1),   # cycle to an older waypoint
+        state.mem_cursor,
+    )
+    is_write = pid == P6_WRITE
+    head = state.mem_head
+    new_buffer = state.memory_buffer.at[head].set(
+        jnp.where(is_write, p, state.memory_buffer[head])          # write current pos (else no-op)
+    )
+    new_head = jnp.where(is_write, (head + 1) % K, head)
+    new_count = jnp.where(is_write, jnp.minimum(state.mem_count + 1, K), state.mem_count)
+    new_cursor = jnp.where(is_write, jnp.int32(0), cursor_after_read)  # write resets cursor to newest
+
+    return state.replace(
+        agent_pos=p_next, visit_counts=visit_counts, energy=state.energy - cost,
+        memory_buffer=new_buffer, mem_head=new_head, mem_count=new_count, mem_cursor=new_cursor,
+    )
 
 
 def action_mask(state: SearchState, cfg: EnvConfig) -> jax.Array:

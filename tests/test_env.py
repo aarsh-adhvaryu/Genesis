@@ -52,6 +52,10 @@ def empty_state(agent, goal) -> SearchState:
         goal_pos=jnp.array(goal, jnp.int32),
         visit_counts=jnp.zeros((H, W), jnp.int32),
         energy=jnp.float32(cfg.b0),
+        memory_buffer=-jnp.ones((cfg.memory_k, 2), jnp.int32),
+        mem_head=jnp.int32(0),
+        mem_count=jnp.int32(0),
+        mem_cursor=jnp.int32(0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=jax.random.PRNGKey(0),
@@ -196,8 +200,9 @@ def test_vmap_matches_serial_and_is_independent():
 def test_obs_shape_and_values():
     s = empty_state((3, 4), (5, 5))
     o = np.asarray(jax.jit(E.obs, static_argnums=1)(s, cfg))
-    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2 + 1,)  # +1 = budget ratio
-    assert o[-1] == pytest.approx(cfg.b0 / cfg.b0)  # full budget at start -> ratio 1.0
+    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2 + 1 + 3,)  # +budget +memory(3)
+    assert o[4 + cfg.obs_patch**2] == pytest.approx(1.0)  # full budget at start -> ratio 1.0
+    assert o[-1] == pytest.approx(0.0)  # no memory written yet -> has_mem flag 0
     # pos/scale in [0,1)
     assert 0.0 <= o[0] < 1.0 and 0.0 <= o[1] < 1.0
     # relative goal vector = (goal - agent)/scale

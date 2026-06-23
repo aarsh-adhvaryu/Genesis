@@ -39,6 +39,9 @@ class EnvConfig:
     b0: float = 100.0            # initial energy budget B0
     lambda_budget: float = 0.0   # weight on the per-step budget-preservation reward lambda*(B_t/B0)
 
+    # --- Working memory (P6/P7/P9): K-slot FIFO ring of bookmarked waypoints ---
+    memory_k: int = 16           # number of waypoint slots
+
     def __post_init__(self) -> None:
         # Shapes must be positive.
         assert self.height > 0 and self.width > 0, "grid dims must be positive"

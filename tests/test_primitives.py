@@ -23,6 +23,8 @@ def _state(agent, goal, energy=None, grid=None):
         grid=g, agent_pos=jnp.array(agent, jnp.int32), goal_pos=jnp.array(goal, jnp.int32),
         visit_counts=jnp.zeros((H, W), jnp.int32),
         energy=jnp.float32(cfg.b0 if energy is None else energy),
+        memory_buffer=-jnp.ones((cfg.memory_k, 2), jnp.int32),
+        mem_head=jnp.int32(0), mem_count=jnp.int32(0), mem_cursor=jnp.int32(0),
         step_count=jnp.int32(0), done=jnp.bool_(False), key=jax.random.PRNGKey(0),
     )
 
@@ -67,3 +69,41 @@ def test_mask_forbids_unaffordable_primitive():
     s = _state((5, 5), (8, 8), energy=1.5)
     m = np.asarray(P.action_mask(s, cfg))
     assert m[P.P1_MOTOR] and not m[P.P5_GRADIENT]
+
+
+# --------------------------------------------------------------------------- memory P6/P7/P9
+def test_p6_write_stores_current_position():
+    s = _state((3, 4), (8, 8))
+    ns = P.apply_primitive(s, jnp.int32(P.P6_WRITE), jnp.int32(0), cfg)
+    assert int(ns.mem_count) == 1 and int(ns.mem_head) == 1
+    assert tuple(np.asarray(ns.memory_buffer[0])) == (3, 4)   # bookmarked the position
+    assert tuple(np.asarray(ns.agent_pos)) == (3, 4)          # write does not move
+    assert float(s.energy - ns.energy) == float(P.PRIMITIVE_COST[P.P6_WRITE])
+
+
+def test_p9_backtrack_teleports_to_written_waypoint():
+    s = _state((3, 4), (8, 8))
+    s = P.apply_primitive(s, jnp.int32(P.P6_WRITE), jnp.int32(0), cfg)   # bookmark (3,4)
+    s = P.apply_primitive(s, jnp.int32(P.P1_MOTOR), jnp.int32(3), cfg)   # wander right -> (3,5)
+    assert tuple(np.asarray(s.agent_pos)) == (3, 5)
+    s = P.apply_primitive(s, jnp.int32(P.P9_BACKTRACK), jnp.int32(0), cfg)  # jump back
+    assert tuple(np.asarray(s.agent_pos)) == (3, 4)
+
+
+def test_p9_backtrack_is_noop_without_memory():
+    s = _state((5, 5), (8, 8))
+    ns = P.apply_primitive(s, jnp.int32(P.P9_BACKTRACK), jnp.int32(0), cfg)
+    assert tuple(np.asarray(ns.agent_pos)) == (5, 5)          # no memory -> stays put
+
+
+def test_p7_read_cursor_cycles_to_older_waypoint():
+    s = _state((1, 1), (8, 8))
+    s = P.apply_primitive(s, jnp.int32(P.P6_WRITE), jnp.int32(0), cfg)   # write A=(1,1)
+    s = P.apply_primitive(s, jnp.int32(P.P1_MOTOR), jnp.int32(3), cfg)   # ->(1,2)
+    s = P.apply_primitive(s, jnp.int32(P.P6_WRITE), jnp.int32(0), cfg)   # write B=(1,2), cursor=0->B
+    from genesis.state import selected_waypoint
+    sel0, _ = selected_waypoint(s, cfg.memory_k)
+    assert tuple(np.asarray(sel0)) == (1, 2)                  # cursor 0 -> newest (B)
+    s = P.apply_primitive(s, jnp.int32(P.P7_READ), jnp.int32(0), cfg)    # advance cursor
+    sel1, _ = selected_waypoint(s, cfg.memory_k)
+    assert tuple(np.asarray(sel1)) == (1, 1)                  # now older (A)

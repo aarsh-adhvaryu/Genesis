@@ -17,7 +17,7 @@ from jax import lax
 
 from genesis.config import EnvConfig
 from genesis.generate import WALL, generate
-from genesis.state import SearchState
+from genesis.state import SearchState, selected_waypoint
 
 # Action -> (drow, dcol). 0=up, 1=down, 2=left, 3=right. (row,col) convention.
 DELTAS = jnp.array([[-1, 0], [1, 0], [0, -1], [0, 1]], dtype=jnp.int32)
@@ -90,15 +90,16 @@ def reset(key: jax.Array, cfg: EnvConfig) -> SearchState:
 
 
 def obs_size(cfg: EnvConfig) -> int:
-    """Minimal obs length: pos(2) + rel_goal(2) + KxK patch + budget ratio(1)."""
-    return 4 + cfg.obs_patch * cfg.obs_patch + 1
+    """Obs length: pos(2) + rel_goal(2) + KxK patch + budget(1) + memory[rel_waypoint(2)+has(1)]."""
+    return 4 + cfg.obs_patch * cfg.obs_patch + 1 + 3
 
 
 def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
-    """Minimal obs = concat[ pos/scale , (goal-pos)/scale , KxK local patch , energy/B0 ].
+    """Obs = concat[ pos/scale , (goal-pos)/scale , KxK patch , energy/B0 , mem_rel(2) , has_mem ].
 
-    The KxK patch is centered on the agent; the grid is wall-padded by r=K//2 so out-of-bounds
-    reads return 'wall'. The trailing budget ratio lets the controller reason about masking.
+    The KxK patch is centered on the agent (grid wall-padded so OOB reads are 'wall'). The budget
+    ratio supports masking-aware decisions; the memory block surfaces the cursor-selected waypoint
+    (relative vector + a have-memory flag) so P6/P7/P9 are actually usable.
     """
     H, W, K = cfg.height, cfg.width, cfg.obs_patch
     r = K // 2
@@ -110,4 +111,8 @@ def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
     padded = jnp.pad(state.grid, r, constant_values=WALL)
     patch = lax.dynamic_slice(padded, (state.agent_pos[0], state.agent_pos[1]), (K, K))
     budget = jnp.array([state.energy / cfg.b0], dtype=jnp.float32)
-    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32), budget])
+    # memory: cursor-selected waypoint as a relative vector (zeroed if no memory), + have-memory flag
+    sel_pos, has_mem = selected_waypoint(state, cfg.memory_k)
+    mem_rel = jnp.where(has_mem, (sel_pos - state.agent_pos).astype(jnp.float32) / scale, 0.0)
+    mem_feat = jnp.concatenate([mem_rel, jnp.array([has_mem], dtype=jnp.float32)])
+    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32), budget, mem_feat])

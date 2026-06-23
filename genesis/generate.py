@@ -107,6 +107,10 @@ def _build(key: jax.Array, cfg: EnvConfig, wall_density: jax.Array) -> SearchSta
         goal_pos=goal_pos,
         visit_counts=jnp.zeros((H, W), dtype=jnp.int32),
         energy=jnp.float32(cfg.b0),          # start each episode with the full budget B0
+        memory_buffer=-jnp.ones((cfg.memory_k, 2), dtype=jnp.int32),  # empty (FIFO ring)
+        mem_head=jnp.int32(0),
+        mem_count=jnp.int32(0),
+        mem_cursor=jnp.int32(0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=key,
