@@ -36,9 +36,10 @@ PRIMITIVE_COST = jnp.array(
 # which primitives move the agent into a grid cell (pay the dynamic traversal multiplier)
 _IS_MOVE = jnp.array([0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0], dtype=bool)
 # which are implemented right now (others are masked out of the action distribution)
-IMPLEMENTED = jnp.array([1, 1, 1, 0, 0, 1, 1, 1, 0, 1, 0, 0, 1], dtype=bool)  # P0,P1,P2,P5,P6,P7,P9,P12
+IMPLEMENTED = jnp.array([1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0, 1], dtype=bool)  # +P3,P4
 
-P0_IDLE, P1_MOTOR, P2_WALLFOLLOW, P5_GRADIENT = 0, 1, 2, 5
+P0_IDLE, P1_MOTOR, P2_WALLFOLLOW = 0, 1, 2
+P3_EXPAND, P4_FRONTIER, P5_GRADIENT = 3, 4, 5
 P6_WRITE, P7_READ, P9_BACKTRACK, P12_SUBGOAL = 6, 7, 9, 12
 
 # Right-hand-rule turn tables, indexed by heading (0=up,1=down,2=left,3=right).
@@ -74,6 +75,45 @@ def _wall_follow(state: SearchState, cfg: EnvConfig):
     # pick the FIRST free candidate: weight by descending priority, argmax
     chosen = jnp.argmax(is_free.astype(jnp.int32) * jnp.array([4, 3, 2, 1]))
     return cand[chosen], is_free.any()
+
+
+def _manhattan_field(target: jax.Array, cfg: EnvConfig) -> jax.Array:
+    """(H,W) Manhattan distance from every cell to `target` — the A* heuristic h."""
+    rows = jnp.arange(cfg.height)[:, None]
+    cols = jnp.arange(cfg.width)[None, :]
+    return (jnp.abs(rows - target[0]) + jnp.abs(cols - target[1])).astype(jnp.float32)
+
+
+def _expand_node(state: SearchState, cell: jax.Array, cfg: EnvConfig):
+    """Expand one frontier `cell`: mark it visited, relax its free unvisited neighbors into the
+    frontier (g[n] = min(g[n], g[cell]+1)). Returns (frontier, visited, g_cost). Agent does NOT move."""
+    nbrs = jnp.clip(cell + DELTAS, jnp.array([0, 0]), jnp.array([cfg.height - 1, cfg.width - 1]))
+    free = state.grid[nbrs[:, 0], nbrs[:, 1]] != WALL
+    not_visited = ~state.visited[nbrs[:, 0], nbrs[:, 1]]
+    addable = free & not_visited
+    tentative = state.g_cost[cell[0], cell[1]] + 1.0
+
+    new_g = state.g_cost.at[nbrs[:, 0], nbrs[:, 1]].min(jnp.where(addable, tentative, jnp.inf))
+    cur = state.frontier[nbrs[:, 0], nbrs[:, 1]]
+    new_frontier = state.frontier.at[nbrs[:, 0], nbrs[:, 1]].set(jnp.where(addable, True, cur))
+    new_visited = state.visited.at[cell[0], cell[1]].set(True)
+    new_frontier = new_frontier.at[cell[0], cell[1]].set(False)   # expanded -> leaves the frontier
+    return new_frontier, new_visited, new_g
+
+
+def _best_frontier_cell(state: SearchState, cfg: EnvConfig) -> jax.Array:
+    """P3 (A*): the frontier cell minimizing f = g + h(goal)."""
+    f = jnp.where(state.frontier, state.g_cost + _manhattan_field(state.goal_pos, cfg), jnp.inf)
+    idx = jnp.argmin(f.reshape(-1))
+    return jnp.stack([idx // cfg.width, idx % cfg.width]).astype(jnp.int32)
+
+
+def _random_frontier_cell(key: jax.Array, state: SearchState, cfg: EnvConfig) -> jax.Array:
+    """P4 (RRT): a uniformly random frontier cell (Gumbel-max over the frontier mask)."""
+    flat = state.frontier.reshape(-1)
+    logits = jnp.where(flat, jax.random.gumbel(key, flat.shape), -jnp.inf)
+    idx = jnp.argmax(logits)
+    return jnp.stack([idx // cfg.width, idx % cfg.width]).astype(jnp.int32)
 
 
 def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cfg: EnvConfig):
@@ -132,10 +172,23 @@ def apply_primitive(state: SearchState, pid: jax.Array, direction: jax.Array, cf
     new_depth = jnp.where(is_subgoal, jnp.minimum(state.goal_depth + 1, cfg.goal_stack_size),
                           state.goal_depth)
 
+    # --- P3 (A* expand) / P4 (RRT sample): grow the abstract search; agent does not move ---
+    is_search = (pid == P3_EXPAND) | (pid == P4_FRONTIER)
+    k_use, k_next = jax.random.split(state.key)
+    cell = jnp.where(pid == P3_EXPAND, _best_frontier_cell(state, cfg),
+                     _random_frontier_cell(k_use, state, cfg))
+    exp_frontier, exp_visited, exp_g = _expand_node(state, cell, cfg)
+    do_expand = is_search & state.frontier.any()                  # nothing to expand -> no-op
+    new_frontier = jnp.where(do_expand, exp_frontier, state.frontier)
+    new_visited = jnp.where(do_expand, exp_visited, state.visited)
+    new_g = jnp.where(do_expand, exp_g, state.g_cost)
+    new_key = jnp.where(pid == P4_FRONTIER, k_next, state.key)    # only P4 consumes randomness
+
     return state.replace(
         agent_pos=p_next, visit_counts=visit_counts, energy=state.energy - cost,
         memory_buffer=new_buffer, mem_head=new_head, mem_count=new_count, mem_cursor=new_cursor,
         heading=new_heading, goal_stack=new_stack, goal_depth=new_depth,
+        frontier=new_frontier, visited=new_visited, g_cost=new_g, key=new_key,
     )
 
 

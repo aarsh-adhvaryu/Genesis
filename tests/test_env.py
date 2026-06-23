@@ -59,6 +59,9 @@ def empty_state(agent, goal) -> SearchState:
         heading=jnp.int32(0),
         goal_stack=-jnp.ones((cfg.goal_stack_size, 2), jnp.int32),
         goal_depth=jnp.int32(0),
+        frontier=jnp.zeros((H, W), bool).at[agent[0], agent[1]].set(True),
+        visited=jnp.zeros((H, W), bool),
+        g_cost=jnp.full((H, W), jnp.inf, jnp.float32).at[agent[0], agent[1]].set(0.0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=jax.random.PRNGKey(0),
@@ -203,9 +206,9 @@ def test_vmap_matches_serial_and_is_independent():
 def test_obs_shape_and_values():
     s = empty_state((3, 4), (5, 5))
     o = np.asarray(jax.jit(E.obs, static_argnums=1)(s, cfg))
-    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2 + 1 + 3,)  # +budget +memory(3)
+    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2 + 1 + 3 + 1,)  # +budget +mem +search
     assert o[4 + cfg.obs_patch**2] == pytest.approx(1.0)  # full budget at start -> ratio 1.0
-    assert o[-1] == pytest.approx(0.0)  # no memory written yet -> has_mem flag 0
+    assert o[-1] == pytest.approx(0.0)  # goal not found by the (just-seeded) frontier yet
     # pos/scale in [0,1)
     assert 0.0 <= o[0] < 1.0 and 0.0 <= o[1] < 1.0
     # relative goal vector = (goal - agent)/scale

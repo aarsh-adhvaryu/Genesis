@@ -67,14 +67,17 @@ learns, THEN thicken (more primitives, full obs, energy budget, PAIRED).
   (P7 semantics = read-cursor is OUR interpretation of "retrieve"; flag if you want plain newest-read.)
 - [x] **#2 P2 wall-follow:** `SearchState.heading` (0..3); right-hand rule (try right/straight/left/
   back, first open; updates heading); turn tables `_RIGHT/_LEFT/_BACK`. Slice 2.1%->94.1%.
-- [x] **#2 P12 subgoal (direction-strided):** `goal_stack (G=4,2)`+`goal_depth`; P12 pushes
-  subgoal=clip(agent+subgoal_stride*DELTAS[direction]); `state.current_target()` = top subgoal else
-  goal; P5 + obs goal-vector retarget to it; reaching a subgoal pops it (in step_primitive), final
-  goal still ends episode. Implemented now: P0,P1,P2,P5,P6,P7,P9,P12. Slice 1.6%->94.7%. 32 tests.
-- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P3/P4 frontier
-  (needs frontier+visited set; reuse BFS kernel), P8 fog/LiDAR (needs partial obs), P10 scout
-  (multi-step sim), P11 commit (stored path). Then **#4 PAIRED** (Antagonist+Adversary, regret).
-  Scale to 32x32.
+- [x] **#2 P12 subgoal (direction-strided):** `goal_stack`+`goal_depth`; P12 pushes
+  subgoal=clip(agent+stride*DELTAS[dir]); `state.current_target()`=top subgoal else goal; P5+obs
+  retarget; reaching subgoal pops it. Slice 1.6%->94.7%.
+- [x] **#2 P3/P4 frontier (abstract, Option B for discovery):** `SearchState` gains `frontier/
+  visited/g_cost` (H,W), seeded at agent. P3=A* best-first (pop min f=g+h, relax neighbors), P4=RRT
+  (pop random frontier cell). Agent does NOT move (sub-algorithmic atoms, so composition is needed —
+  not "A* as one action"). P4 consumes `state.key`. obs gains `goal_found` flag. cost 3 each.
+  Implemented now: P0,P1,P2,P3,P4,P5,P6,P7,P9,P12 (10/13). Slice 0.2%->94.3%. 36 tests.
+- **Resume here — remaining #2 primitives:** P8 sensor-burst (needs fog/partial-obs — a Dim-3 env
+  feature), P10 scout (multi-step sim), P11 commit (multi-step stored path; pairs with the frontier/
+  path). P10/P11 break the one-tick pattern. Then **#4 PAIRED** (Antagonist+Adversary, regret). 32x32.
 
 ## Stage 1 build order (one unit at a time; math first, then code; confirm each before next)
 1. **Scaffold** `~/Genesis`: `pyproject.toml` (py3.12, ruff/pytest), `.gitignore` (.venv, __pycache__,

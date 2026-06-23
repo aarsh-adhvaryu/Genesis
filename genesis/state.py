@@ -34,6 +34,10 @@ class SearchState:
     heading: chex.Array       # ()    int32   — agent facing dir (0=up,1=down,2=left,3=right) for P2
     goal_stack: chex.Array    # (G,2) int32   — stack of P12 subgoals (-1 = empty slot)
     goal_depth: chex.Array    # ()    int32   — number of active subgoals (0 = target the final goal)
+    # abstract search structure built by P3 (A*) / P4 (RRT); does NOT move the agent
+    frontier: chex.Array      # (H,W) bool    — discovered-but-unexpanded cells
+    visited: chex.Array       # (H,W) bool    — expanded cells
+    g_cost: chex.Array        # (H,W) float32 — best known cost-to-reach from the search root (inf=unset)
     step_count: chex.Array    # ()    int32   — steps taken this episode (drives max_steps timeout)
     done: chex.Array          # ()    bool_   — episode finished (reached goal or timed out)
     key: chex.Array           # (2,)  uint32  — per-episode PRNG key (reproducible, vmap-independent)

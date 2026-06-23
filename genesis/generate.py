@@ -114,6 +114,10 @@ def _build(key: jax.Array, cfg: EnvConfig, wall_density: jax.Array) -> SearchSta
         heading=jnp.int32(0),               # face "up" initially (P2 wall-follow updates it)
         goal_stack=-jnp.ones((cfg.goal_stack_size, 2), dtype=jnp.int32),  # no subgoals
         goal_depth=jnp.int32(0),            # 0 = target the final goal
+        # seed the abstract search at the agent (P3/P4 grow it; agent itself is unaffected)
+        frontier=jnp.zeros((H, W), dtype=bool).at[agent_pos[0], agent_pos[1]].set(True),
+        visited=jnp.zeros((H, W), dtype=bool),
+        g_cost=jnp.full((H, W), jnp.inf, dtype=jnp.float32).at[agent_pos[0], agent_pos[1]].set(0.0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=key,

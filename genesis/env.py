@@ -90,8 +90,8 @@ def reset(key: jax.Array, cfg: EnvConfig) -> SearchState:
 
 
 def obs_size(cfg: EnvConfig) -> int:
-    """Obs length: pos(2) + rel_goal(2) + KxK patch + budget(1) + memory[rel_waypoint(2)+has(1)]."""
-    return 4 + cfg.obs_patch * cfg.obs_patch + 1 + 3
+    """Obs length: pos(2)+rel_goal(2)+KxK patch+budget(1)+memory(3)+search goal_found(1)."""
+    return 4 + cfg.obs_patch * cfg.obs_patch + 1 + 3 + 1
 
 
 def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
@@ -116,4 +116,8 @@ def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
     sel_pos, has_mem = selected_waypoint(state, cfg.memory_k)
     mem_rel = jnp.where(has_mem, (sel_pos - state.agent_pos).astype(jnp.float32) / scale, 0.0)
     mem_feat = jnp.concatenate([mem_rel, jnp.array([has_mem], dtype=jnp.float32)])
-    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32), budget, mem_feat])
+    # search progress: has the P3/P4 frontier discovered the goal yet?
+    gr, gc = state.goal_pos[0], state.goal_pos[1]
+    goal_found = (state.frontier[gr, gc] | state.visited[gr, gc]).astype(jnp.float32)
+    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32), budget,
+                            mem_feat, jnp.array([goal_found])])

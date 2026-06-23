@@ -27,6 +27,9 @@ def _state(agent, goal, energy=None, grid=None, heading=0):
         mem_head=jnp.int32(0), mem_count=jnp.int32(0), mem_cursor=jnp.int32(0),
         heading=jnp.int32(heading),
         goal_stack=-jnp.ones((cfg.goal_stack_size, 2), jnp.int32), goal_depth=jnp.int32(0),
+        frontier=jnp.zeros((H, W), bool).at[agent[0], agent[1]].set(True),
+        visited=jnp.zeros((H, W), bool),
+        g_cost=jnp.full((H, W), jnp.inf, jnp.float32).at[agent[0], agent[1]].set(0.0),
         step_count=jnp.int32(0), done=jnp.bool_(False), key=jax.random.PRNGKey(0),
     )
 
@@ -59,8 +62,8 @@ def test_mask_only_implemented_and_p0_always_legal():
     m = np.asarray(P.action_mask(s, cfg))
     assert m.shape == (P.N_PRIMITIVES,)
     assert m[P.P0_IDLE] and m[P.P1_MOTOR] and m[P.P5_GRADIENT]
-    # unimplemented primitives masked off
-    assert not m[P.P0_IDLE + 3]  # P3 not implemented
+    # unimplemented primitives masked off (P8 sensor-burst not built yet)
+    assert not m[8]  # P8 not implemented
     # P0 stays legal even with ~zero budget
     s_broke = _state((5, 5), (8, 8), energy=0.0001)
     assert bool(np.asarray(P.action_mask(s_broke, cfg))[P.P0_IDLE])
@@ -161,3 +164,44 @@ def test_reaching_subgoal_pops_it():
     assert tuple(np.asarray(ns.agent_pos)) == (5, 6)
     assert int(ns.goal_depth) == 0                                   # subgoal popped
     assert not bool(done)                                            # not the final goal -> continues
+
+
+# --------------------------------------------------------------------------- P3/P4 frontier search
+def test_p3_expand_marks_visited_and_grows_frontier():
+    s = _state((5, 5), (8, 8))                                       # frontier seeded at agent
+    ns = P.apply_primitive(s, jnp.int32(P.P3_EXPAND), jnp.int32(0), cfg)
+    assert bool(np.asarray(ns.visited)[5, 5])                        # agent cell expanded
+    assert not bool(np.asarray(ns.frontier)[5, 5])                   # ...and left the frontier
+    # its 4 free neighbors are now frontier with g = 1
+    for nb in [(4, 5), (6, 5), (5, 4), (5, 6)]:
+        assert bool(np.asarray(ns.frontier)[nb])
+        assert float(np.asarray(ns.g_cost)[nb]) == 1.0
+    assert tuple(np.asarray(ns.agent_pos)) == (5, 5)                 # agent did NOT move
+    assert float(s.energy - ns.energy) == float(P.PRIMITIVE_COST[P.P3_EXPAND])
+
+
+def test_p3_does_not_expand_through_walls():
+    g = jnp.ones((H, W), jnp.int8).at[1:-1, 1:-1].set(0)
+    g = g.at[5, 6].set(1)                                            # wall east of agent
+    s = _state((5, 5), (8, 8), grid=g)
+    ns = P.apply_primitive(s, jnp.int32(P.P3_EXPAND), jnp.int32(0), cfg)
+    assert not bool(np.asarray(ns.frontier)[5, 6])                   # wall cell never enters frontier
+
+
+def test_p3_repeated_expansion_eventually_finds_goal():
+    s = _state((5, 5), (5, 8))                                       # goal a few cells east, open room
+    found = False
+    for _ in range(40):
+        s = P.apply_primitive(s, jnp.int32(P.P3_EXPAND), jnp.int32(0), cfg)
+        if bool(np.asarray(s.visited)[5, 8]) or bool(np.asarray(s.frontier)[5, 8]):
+            found = True
+            break
+    assert found                                                    # A* frontier reaches the goal
+
+
+def test_p4_random_expand_is_implemented_and_grows_search():
+    s = _state((5, 5), (8, 8))
+    ns = P.apply_primitive(s, jnp.int32(P.P4_FRONTIER), jnp.int32(0), cfg)
+    assert bool(np.asarray(P.action_mask(s, cfg))[P.P4_FRONTIER])
+    assert int(np.asarray(ns.visited).sum()) == 1                   # expanded exactly one node
+    assert int(np.asarray(ns.frontier).sum()) >= 1                  # grew the frontier
