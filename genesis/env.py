@@ -17,7 +17,7 @@ from jax import lax
 
 from genesis.config import EnvConfig
 from genesis.generate import WALL, generate
-from genesis.state import SearchState, selected_waypoint
+from genesis.state import SearchState, current_target, selected_waypoint
 
 # Action -> (drow, dcol). 0=up, 1=down, 2=left, 3=right. (row,col) convention.
 DELTAS = jnp.array([[-1, 0], [1, 0], [0, -1], [0, 1]], dtype=jnp.int32)
@@ -105,7 +105,8 @@ def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
     r = K // 2
     scale = jnp.array([H, W], dtype=jnp.float32)
     pos_norm = state.agent_pos.astype(jnp.float32) / scale
-    rel_goal = (state.goal_pos - state.agent_pos).astype(jnp.float32) / scale
+    # goal vector points at the CURRENT target (top P12 subgoal if any, else the final goal)
+    rel_goal = (current_target(state) - state.agent_pos).astype(jnp.float32) / scale
     # pad with WALL so the window is always valid; cell (i,j) -> (i+r, j+r), so a K-window
     # centered at (i,j) starts at (i, j) in padded coordinates.
     padded = jnp.pad(state.grid, r, constant_values=WALL)

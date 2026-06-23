@@ -26,6 +26,7 @@ def _state(agent, goal, energy=None, grid=None, heading=0):
         memory_buffer=-jnp.ones((cfg.memory_k, 2), jnp.int32),
         mem_head=jnp.int32(0), mem_count=jnp.int32(0), mem_cursor=jnp.int32(0),
         heading=jnp.int32(heading),
+        goal_stack=-jnp.ones((cfg.goal_stack_size, 2), jnp.int32), goal_depth=jnp.int32(0),
         step_count=jnp.int32(0), done=jnp.bool_(False), key=jax.random.PRNGKey(0),
     )
 
@@ -131,3 +132,32 @@ def test_p2_goes_straight_when_right_is_blocked():
 def test_p2_is_implemented_in_mask():
     s = _state((5, 5), (8, 8))
     assert bool(np.asarray(P.action_mask(s, cfg))[P.P2_WALLFOLLOW])
+
+
+# --------------------------------------------------------------------------- P12 subgoal
+def test_p12_pushes_subgoal_in_chosen_direction():
+    from genesis.state import current_target
+    s = _state((5, 5), (1, 1))                                       # final goal up-left
+    ns = P.apply_primitive(s, jnp.int32(P.P12_SUBGOAL), jnp.int32(3), cfg)  # direction = right
+    assert int(ns.goal_depth) == 1
+    expected = (5, min(5 + cfg.subgoal_stride, W - 1))
+    assert tuple(np.asarray(current_target(ns))) == expected
+    assert float(s.energy - ns.energy) == float(P.PRIMITIVE_COST[P.P12_SUBGOAL])
+
+
+def test_p5_targets_subgoal_after_p12():
+    s = _state((5, 5), (1, 1))                                       # P5 alone -> up/left toward goal
+    s = P.apply_primitive(s, jnp.int32(P.P12_SUBGOAL), jnp.int32(3), cfg)   # subgoal to the right
+    ns = P.apply_primitive(s, jnp.int32(P.P5_GRADIENT), jnp.int32(0), cfg)
+    assert tuple(np.asarray(ns.agent_pos)) == (5, 6)                 # greedy now heads to the subgoal
+
+
+def test_reaching_subgoal_pops_it():
+    s = _state((5, 5), (1, 1)).replace(
+        goal_stack=jnp.array([[5, 6], [-1, -1], [-1, -1], [-1, -1]], jnp.int32),
+        goal_depth=jnp.int32(1),
+    )
+    ns, _, done = P.step_primitive(s, jnp.int32(P.P1_MOTOR), jnp.int32(3), cfg)  # step onto subgoal
+    assert tuple(np.asarray(ns.agent_pos)) == (5, 6)
+    assert int(ns.goal_depth) == 0                                   # subgoal popped
+    assert not bool(done)                                            # not the final goal -> continues

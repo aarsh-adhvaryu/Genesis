@@ -57,6 +57,8 @@ def empty_state(agent, goal) -> SearchState:
         mem_count=jnp.int32(0),
         mem_cursor=jnp.int32(0),
         heading=jnp.int32(0),
+        goal_stack=-jnp.ones((cfg.goal_stack_size, 2), jnp.int32),
+        goal_depth=jnp.int32(0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=jax.random.PRNGKey(0),

@@ -42,6 +42,10 @@ class EnvConfig:
     # --- Working memory (P6/P7/P9): K-slot FIFO ring of bookmarked waypoints ---
     memory_k: int = 16           # number of waypoint slots
 
+    # --- Hierarchical subgoals (P12): stack of intermediate targets ---
+    goal_stack_size: int = 4     # max nested subgoals
+    subgoal_stride: int = 4      # cells P12 projects a subgoal in the chosen direction
+
     def __post_init__(self) -> None:
         # Shapes must be positive.
         assert self.height > 0 and self.width > 0, "grid dims must be positive"

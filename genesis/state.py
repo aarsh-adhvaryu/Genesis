@@ -32,6 +32,8 @@ class SearchState:
     mem_count: chex.Array     # ()    int32   — number of valid waypoints (saturates at K)
     mem_cursor: chex.Array    # ()    int32   — read offset from newest (0=newest); P7 advances it
     heading: chex.Array       # ()    int32   — agent facing dir (0=up,1=down,2=left,3=right) for P2
+    goal_stack: chex.Array    # (G,2) int32   — stack of P12 subgoals (-1 = empty slot)
+    goal_depth: chex.Array    # ()    int32   — number of active subgoals (0 = target the final goal)
     step_count: chex.Array    # ()    int32   — steps taken this episode (drives max_steps timeout)
     done: chex.Array          # ()    bool_   — episode finished (reached goal or timed out)
     key: chex.Array           # (2,)  uint32  — per-episode PRNG key (reproducible, vmap-independent)
@@ -45,3 +47,14 @@ def selected_waypoint(state: "SearchState", memory_k: int):
     """
     idx = (state.mem_head - 1 - state.mem_cursor) % memory_k
     return state.memory_buffer[idx], state.mem_count > 0
+
+
+def current_target(state: "SearchState"):
+    """The position goal-directed primitives aim at: the top subgoal if any, else the final goal.
+
+    Top of the P12 stack is index (goal_depth - 1); with goal_depth == 0 it's the real goal.
+    """
+    import jax.numpy as jnp
+
+    top = state.goal_stack[jnp.maximum(state.goal_depth - 1, 0)]
+    return jnp.where(state.goal_depth > 0, top, state.goal_pos)
