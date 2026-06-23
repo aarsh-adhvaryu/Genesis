@@ -38,14 +38,16 @@ class PPOConfig:
 
 
 class Batch(NamedTuple):
-    """Flattened rollout data (leading axis = T*N), the input to the PPO update."""
+    """Flattened rollout data (leading axis = T*N), the input to the PPO update (factored action)."""
 
     obs: jax.Array
-    action: jax.Array
-    log_prob: jax.Array   # logp_old (at action time)
-    value: jax.Array      # V_old (unused here; kept for value-clipping if added later)
+    primitive: jax.Array  # chosen primitive id
+    direction: jax.Array  # chosen direction
+    log_prob: jax.Array   # logp_old = logp_prim + logp_dir (at action time)
+    value: jax.Array      # V_old (kept for value-clipping if added later)
     advantage: jax.Array
     ret: jax.Array        # GAE return target
+    prim_mask: jax.Array  # (N_PRIMITIVES,) legal-primitive mask at action time
 
 
 class Metrics(NamedTuple):
@@ -63,9 +65,12 @@ def make_optimizer(ppo: PPOConfig) -> optax.GradientTransformation:
 
 
 def ppo_loss(net, batch: Batch, ppo: PPOConfig):
-    logits, value = jax.vmap(net)(batch.obs)
-    dist = distrax.Categorical(logits=logits)
-    log_prob = dist.log_prob(batch.action)
+    prim_logits, dir_logits, value = jax.vmap(net)(batch.obs)
+    # re-apply the SAME budget mask used at action time so the ratio is consistent
+    prim_logits = jnp.where(batch.prim_mask, prim_logits, -1e9)
+    prim_dist = distrax.Categorical(logits=prim_logits)
+    dir_dist = distrax.Categorical(logits=dir_logits)
+    log_prob = prim_dist.log_prob(batch.primitive) + dir_dist.log_prob(batch.direction)
 
     # normalize advantages within the minibatch (stabilizes the policy gradient scale)
     adv = batch.advantage
@@ -77,7 +82,7 @@ def ppo_loss(net, batch: Batch, ppo: PPOConfig):
     pg_loss = -jnp.minimum(pg_unclipped, pg_clipped).mean()          # maximize gain -> minimize -gain
 
     v_loss = 0.5 * jnp.mean((value - batch.ret) ** 2)
-    entropy = dist.entropy().mean()
+    entropy = (prim_dist.entropy() + dir_dist.entropy()).mean()      # factored policy: entropies add
     total = pg_loss + ppo.vf_coef * v_loss - ppo.ent_coef * entropy
 
     # diagnostics (not differentiated): how far the policy moved, how often clipping bound

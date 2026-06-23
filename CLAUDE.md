@@ -56,10 +56,15 @@ learns, THEN thicken (more primitives, full obs, energy budget, PAIRED).
 - [x] **WATCHABLE SLICE ACHIEVED (2026-06-23):** `network` (MLP actor-critic), `rollout`+GAE,
   `ppo` (clipped loss), `train` driver, `render`. On 11x11 easy maps greedy success climbs
   **4.5% -> 73%** in ~32s/300 updates; curve + trajectory saved to `runs/` (gitignored).
-- **Resume here — THICKEN the slice** toward the real system (each was deferred until the slice
-  worked): widen the action interface toward the 13 primitives, add the energy budget + dynamic
-  traversal cost, richer observation, then PAIRED. Scale env back up to 32x32. Keep math-first,
-  one unit at a time, confirm each.
+- [x] **Thicken #1 (scale):** PPO scales to 32x32 (success 0.8%->43%/325 upd; slower = sparse reward,
+  motivates curriculum). [x] **#3 (budget+cost):** `energy` in state, dynamic cost base*(1+visit),
+  exhaustion ends episode, `lambda_budget` reward (=0 default), `action_costs`. Slice still learns.
+- [x] **#2 foundation (FACTORED action, Option 1):** action = (primitive 13-way, direction 4-way);
+  two-head `ActorCritic`; budget `action_mask` (P0 always legal); primitives P0/P1/P5 implemented,
+  rest masked off; obs gains budget ratio. Slice learns 15%->96%. 22 tests pass.
+- **Resume here — remaining #2 primitives** (one unit each, mask flips on as built): P2 wall-follow,
+  P6/P7/P9 memory (needs `memory_buffer` K=16 in state), P3/P4 frontier, P8 fog/LiDAR, P10 scout
+  (multi-step), P11 commit, P12 subgoal. Then **#4 PAIRED** (Antagonist+Adversary, regret). 32x32.
 
 ## Stage 1 build order (one unit at a time; math first, then code; confirm each before next)
 1. **Scaffold** `~/Genesis`: `pyproject.toml` (py3.12, ruff/pytest), `.gitignore` (.venv, __pycache__,

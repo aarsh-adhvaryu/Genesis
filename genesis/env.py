@@ -90,15 +90,15 @@ def reset(key: jax.Array, cfg: EnvConfig) -> SearchState:
 
 
 def obs_size(cfg: EnvConfig) -> int:
-    """Length of the minimal observation vector: pos(2) + rel_goal(2) + KxK patch."""
-    return 4 + cfg.obs_patch * cfg.obs_patch
+    """Minimal obs length: pos(2) + rel_goal(2) + KxK patch + budget ratio(1)."""
+    return 4 + cfg.obs_patch * cfg.obs_patch + 1
 
 
 def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
-    """Minimal observation = concat[ pos/scale , (goal-pos)/scale , KxK local patch (flattened) ].
+    """Minimal obs = concat[ pos/scale , (goal-pos)/scale , KxK local patch , energy/B0 ].
 
     The KxK patch is centered on the agent; the grid is wall-padded by r=K//2 so out-of-bounds
-    reads return 'wall' instead of going off-array.
+    reads return 'wall'. The trailing budget ratio lets the controller reason about masking.
     """
     H, W, K = cfg.height, cfg.width, cfg.obs_patch
     r = K // 2
@@ -109,4 +109,5 @@ def obs(state: SearchState, cfg: EnvConfig) -> jax.Array:
     # centered at (i,j) starts at (i, j) in padded coordinates.
     padded = jnp.pad(state.grid, r, constant_values=WALL)
     patch = lax.dynamic_slice(padded, (state.agent_pos[0], state.agent_pos[1]), (K, K))
-    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32)])
+    budget = jnp.array([state.energy / cfg.b0], dtype=jnp.float32)
+    return jnp.concatenate([pos_norm, rel_goal, patch.reshape(-1).astype(jnp.float32), budget])

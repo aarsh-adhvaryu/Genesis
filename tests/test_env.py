@@ -196,7 +196,8 @@ def test_vmap_matches_serial_and_is_independent():
 def test_obs_shape_and_values():
     s = empty_state((3, 4), (5, 5))
     o = np.asarray(jax.jit(E.obs, static_argnums=1)(s, cfg))
-    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2,)
+    assert o.shape == (E.obs_size(cfg),) == (4 + cfg.obs_patch**2 + 1,)  # +1 = budget ratio
+    assert o[-1] == pytest.approx(cfg.b0 / cfg.b0)  # full budget at start -> ratio 1.0
     # pos/scale in [0,1)
     assert 0.0 <= o[0] < 1.0 and 0.0 <= o[1] < 1.0
     # relative goal vector = (goal - agent)/scale

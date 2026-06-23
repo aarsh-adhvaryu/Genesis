@@ -17,24 +17,30 @@ import jax.numpy as jnp
 
 
 class ActorCritic(eqx.Module):
+    """Factored actor-critic: shared trunk -> primitive head (13) + direction head (4) + critic.
+
+    The direction head parameterizes P1 (Motor); other primitives ignore it. Joint policy factorizes
+    as pi(prim, dir | s) = pi_prim(prim|s) * pi_dir(dir|s), so log-probs and entropies simply add.
+    """
+
     trunk: list
-    actor_head: eqx.nn.Linear
+    prim_head: eqx.nn.Linear
+    dir_head: eqx.nn.Linear
     critic_head: eqx.nn.Linear
 
-    def __init__(self, obs_dim: int, n_actions: int, hidden: int, *, key):
-        k1, k2, k3, k4 = jax.random.split(key, 4)
+    def __init__(self, obs_dim: int, n_primitives: int, n_directions: int, hidden: int, *, key):
+        k1, k2, k3, k4, k5 = jax.random.split(key, 5)
         self.trunk = [
             eqx.nn.Linear(obs_dim, hidden, key=k1),
             eqx.nn.Linear(hidden, hidden, key=k2),
         ]
-        self.actor_head = eqx.nn.Linear(hidden, n_actions, key=k3)
-        self.critic_head = eqx.nn.Linear(hidden, 1, key=k4)
+        self.prim_head = eqx.nn.Linear(hidden, n_primitives, key=k3)
+        self.dir_head = eqx.nn.Linear(hidden, n_directions, key=k4)
+        self.critic_head = eqx.nn.Linear(hidden, 1, key=k5)
 
     def __call__(self, obs: jax.Array):
-        """obs: (obs_dim,) -> (logits (n_actions,), value scalar)."""
+        """obs: (obs_dim,) -> (prim_logits (13,), dir_logits (4,), value scalar)."""
         x = obs
         for layer in self.trunk:
             x = jnp.tanh(layer(x))
-        logits = self.actor_head(x)
-        value = self.critic_head(x)[0]  # (1,) -> scalar
-        return logits, value
+        return self.prim_head(x), self.dir_head(x), self.critic_head(x)[0]

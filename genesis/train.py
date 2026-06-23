@@ -18,10 +18,21 @@ import jax.numpy as jnp
 from jax import lax
 
 from genesis.config import EnvConfig
-from genesis.env import N_ACTIONS, obs as obs_fn, obs_size, reset, step
+from genesis.env import obs as obs_fn
+from genesis.env import obs_size, reset
 from genesis.network import ActorCritic
 from genesis.ppo import Batch, PPOConfig, make_optimizer, make_update
+from genesis.primitives import N_DIRECTIONS, N_PRIMITIVES, action_mask, step_primitive
 from genesis.rollout import collect_rollout, compute_gae
+
+_NEG_INF = -1e9
+
+
+def _greedy_action(net, state, cfg):
+    """Deterministic factored action: masked-argmax primitive + argmax direction."""
+    prim_logits, dir_logits, _ = net(obs_fn(state, cfg))
+    prim_logits = jnp.where(action_mask(state, cfg), prim_logits, _NEG_INF)
+    return jnp.argmax(prim_logits), jnp.argmax(dir_logits)
 
 RUNS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "runs")
 
@@ -38,8 +49,9 @@ def make_train_step(env_cfg: EnvConfig, ppo_cfg: PPOConfig, horizon: int, optimi
 
         flat = lambda x: x.reshape((x.shape[0] * x.shape[1],) + x.shape[2:])  # (T,N,..)->(T*N,..)
         batch = Batch(
-            obs=flat(trans.obs), action=flat(trans.action), log_prob=flat(trans.log_prob),
-            value=flat(trans.value), advantage=flat(adv), ret=flat(ret),
+            obs=flat(trans.obs), primitive=flat(trans.primitive), direction=flat(trans.direction),
+            log_prob=flat(trans.log_prob), value=flat(trans.value), advantage=flat(adv),
+            ret=flat(ret), prim_mask=flat(trans.prim_mask),
         )
         net, opt_state, metrics = update(net, opt_state, batch, k_upd)
         diag = {"mean_step_reward": trans.reward.mean(), "entropy": metrics.entropy,
@@ -58,9 +70,9 @@ def make_greedy_eval(env_cfg: EnvConfig, n_eval: int):
 
         def body(carry, _):
             states, done_mask, succ_mask = carry
-            logits, _ = jax.vmap(net)(jax.vmap(obs_fn, in_axes=(0, None))(states, env_cfg))
-            actions = jnp.argmax(logits, axis=-1)                       # greedy (no sampling)
-            states, reward, done = jax.vmap(step, in_axes=(0, 0, None))(states, actions, env_cfg)
+            prims, dirs = jax.vmap(_greedy_action, in_axes=(None, 0, None))(net, states, env_cfg)
+            states, reward, done = jax.vmap(step_primitive, in_axes=(0, 0, 0, None))(
+                states, prims, dirs, env_cfg)
             newly_done = done & (~done_mask)
             succ_mask = succ_mask | (newly_done & (reward > 0.0))       # count each episode once
             done_mask = done_mask | done
@@ -80,8 +92,8 @@ def run_greedy_episode(net, env_cfg: EnvConfig, key, max_steps: int):
     for _ in range(max_steps):
         if reached:
             break
-        logits, _ = net(obs_fn(state, env_cfg))
-        state, reward, done = step(state, jnp.argmax(logits), env_cfg)
+        prim, direction = _greedy_action(net, state, env_cfg)
+        state, reward, done = step_primitive(state, prim, direction, env_cfg)
         steps += 1
         if bool(done):
             reached = bool(reward > 0.0)
@@ -98,7 +110,7 @@ def train_run(env_cfg: EnvConfig, ppo_cfg: PPOConfig = PPOConfig(), *, n_envs=25
     os.makedirs(RUNS_DIR, exist_ok=True)
     key = jax.random.PRNGKey(seed)
     key, k_net, k_reset = jax.random.split(key, 3)
-    net = ActorCritic(obs_size(env_cfg), N_ACTIONS, hidden=64, key=k_net)
+    net = ActorCritic(obs_size(env_cfg), N_PRIMITIVES, N_DIRECTIONS, hidden=64, key=k_net)
     optimizer = make_optimizer(ppo_cfg)
     opt_state = optimizer.init(eqx.filter(net, eqx.is_array))
     states = jax.vmap(reset, in_axes=(0, None))(jax.random.split(k_reset, n_envs), env_cfg)
