@@ -89,16 +89,14 @@ def run_greedy_episode(net, env_cfg: EnvConfig, key, max_steps: int):
     return state, steps, reached
 
 
-def main():
-    os.makedirs(RUNS_DIR, exist_ok=True)
-    # --- small / easy slice config: fast, visible learning (32x32 default stays for real runs) ---
-    env_cfg = EnvConfig(
-        height=11, width=11, max_steps=50, r_goal=20.0, time_penalty=0.02, wall_density_max=0.10
-    )
-    ppo_cfg = PPOConfig()
-    n_envs, horizon, n_updates, eval_every = 256, 32, 300, 10
+def train_run(env_cfg: EnvConfig, ppo_cfg: PPOConfig = PPOConfig(), *, n_envs=256, horizon=32,
+              n_updates=300, eval_every=10, n_eval=512, tag="slice", seed=0):
+    """Run the PPO loop on `env_cfg`; log greedy success; save runs/<tag>_curve.png + trajectory.
 
-    key = jax.random.PRNGKey(0)
+    Returns (net, hist_upd, hist_succ). Reusable across configs (slice, scaled, primitives, ...).
+    """
+    os.makedirs(RUNS_DIR, exist_ok=True)
+    key = jax.random.PRNGKey(seed)
     key, k_net, k_reset = jax.random.split(key, 3)
     net = ActorCritic(obs_size(env_cfg), N_ACTIONS, hidden=64, key=k_net)
     optimizer = make_optimizer(ppo_cfg)
@@ -106,9 +104,9 @@ def main():
     states = jax.vmap(reset, in_axes=(0, None))(jax.random.split(k_reset, n_envs), env_cfg)
 
     train_step = make_train_step(env_cfg, ppo_cfg, horizon, optimizer)
-    evaluate = make_greedy_eval(env_cfg, n_eval=512)
+    evaluate = make_greedy_eval(env_cfg, n_eval=n_eval)
 
-    print(f"GENESIS PPO slice | env {env_cfg.height}x{env_cfg.width} | {n_envs} envs x T{horizon} "
+    print(f"GENESIS PPO [{tag}] | env {env_cfg.height}x{env_cfg.width} | {n_envs} envs x T{horizon} "
           f"| {n_updates} updates | device {jax.devices()[0].platform}")
     print(f"{'upd':>4} | {'greedy success%':>15} | {'mean_r':>8} | {'entropy':>7} | {'kl':>7} | {'sec':>5}")
     print("-" * 64)
@@ -132,21 +130,29 @@ def main():
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.plot(hist_upd, [s * 100 for s in hist_succ], "-o", color="#2ca02c", ms=3)
     ax.set_xlabel("update"); ax.set_ylabel("greedy success %"); ax.set_ylim(0, 100)
-    ax.set_title("GENESIS PPO slice — learning curve"); ax.grid(alpha=0.3)
-    curve_path = os.path.join(RUNS_DIR, "learning_curve.png")
+    ax.set_title(f"GENESIS PPO [{tag}] — learning curve"); ax.grid(alpha=0.3)
+    curve_path = os.path.join(RUNS_DIR, f"{tag}_curve.png")
     fig.tight_layout(); fig.savefig(curve_path, dpi=110); plt.close(fig)
 
     # --- a final greedy episode, with its path drawn ---
     from genesis.render import save_grid
     fstate, nsteps, reached = run_greedy_episode(net, env_cfg, jax.random.PRNGKey(999), env_cfg.max_steps)
-    traj_path = os.path.join(RUNS_DIR, "greedy_episode.png")
-    save_grid(fstate, traj_path, title=f"greedy: {'REACHED' if reached else 'failed'} in {nsteps} steps",
+    traj_path = os.path.join(RUNS_DIR, f"{tag}_episode.png")
+    save_grid(fstate, traj_path, title=f"[{tag}] greedy: {'REACHED' if reached else 'failed'} in {nsteps} steps",
               show_trail=True)
 
     print("-" * 64)
     print(f"greedy success%: start {hist_succ[0]*100:.1f} -> final {hist_succ[-1]*100:.1f}")
-    print(f"saved: {curve_path}")
-    print(f"saved: {traj_path}  (greedy episode {'REACHED' if reached else 'failed'} in {nsteps} steps)")
+    print(f"saved: {curve_path}  |  {traj_path}")
+    return net, hist_upd, hist_succ
+
+
+def main():
+    """The original watchable slice: small/easy 11x11 maps, fast visible learning."""
+    env_cfg = EnvConfig(
+        height=11, width=11, max_steps=50, r_goal=20.0, time_penalty=0.02, wall_density_max=0.10
+    )
+    train_run(env_cfg, n_updates=300, tag="slice")
 
 
 if __name__ == "__main__":

@@ -34,9 +34,10 @@ class EnvConfig:
     wall_density_min: float = 0.0
     wall_density_max: float = 0.25
 
-    # --- Energy budget (Stage 2; declared now, UNUSED in Stage 1) ---
-    base_cost: float = 1.0    # per-step traversal base cost -> Stage 2: base_cost * (1 + visit_count)
-    b0: float = 100.0         # initial energy budget B0
+    # --- Energy budget + dynamic traversal cost (Stage 2) ---
+    base_cost: float = 1.0       # base traversal cost -> dynamic cost = base_cost * (1 + visit_count)
+    b0: float = 100.0            # initial energy budget B0
+    lambda_budget: float = 0.0   # weight on the per-step budget-preservation reward lambda*(B_t/B0)
 
     def __post_init__(self) -> None:
         # Shapes must be positive.

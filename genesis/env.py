@@ -24,37 +24,59 @@ DELTAS = jnp.array([[-1, 0], [1, 0], [0, -1], [0, 1]], dtype=jnp.int32)
 N_ACTIONS = 4
 
 
+def _dest_cell(p: jax.Array, action: jax.Array, grid: jax.Array, cfg: EnvConfig) -> jax.Array:
+    """Destination of `action` from p with wall collision (wall -> stay put). Returns (2,) int32."""
+    H, W = cfg.height, cfg.width
+    p_prime = jnp.clip(p + DELTAS[action], jnp.array([0, 0]), jnp.array([H - 1, W - 1]))
+    is_wall = grid[p_prime[0], p_prime[1]] == WALL
+    return jnp.where(is_wall, p, p_prime)
+
+
+def action_costs(state: SearchState, cfg: EnvConfig) -> jax.Array:
+    """(N_ACTIONS,) energy cost of each action = base_cost * (1 + visit_count[destination]).
+
+    Exposed for the budget-masking that the expensive primitives need (added with the 13-primitive
+    action interface). The motor's costs are near-uniform, so masking rarely binds yet.
+    """
+    p = state.agent_pos
+    dests = jax.vmap(lambda a: _dest_cell(p, a, state.grid, cfg))(jnp.arange(N_ACTIONS))  # (A,2)
+    vc = state.visit_counts[dests[:, 0], dests[:, 1]].astype(jnp.float32)                 # (A,)
+    return cfg.base_cost * (1.0 + vc)
+
+
 def apply_action(state: SearchState, action: jax.Array, cfg: EnvConfig) -> SearchState:
-    """The motor (Stage-1 = 4-dir move). Updates agent_pos (with wall collision) + visit_counts.
+    """The motor (Stage-1 = 4-dir move). Updates agent_pos (collision), visit_counts, and energy.
 
     Math (branchless):
-        p'      = clip(p + Δ, 0, [H-1, W-1])              # stay on the grid
-        p_next  = p'  if grid[p'] != wall  else  p        # walls block -> no-op
-        visit_counts[p_next] += 1
+        p_next = clip(p+Δ) if not wall else p            # walls block -> no-op
+        cost   = base_cost * (1 + visit_count[p_next])   # dynamic traversal cost (BEFORE increment)
+        visit_counts[p_next] += 1 ;  energy -= cost
     """
-    H, W = cfg.height, cfg.width
     p = state.agent_pos
-    p_prime = jnp.clip(p + DELTAS[action], jnp.array([0, 0]), jnp.array([H - 1, W - 1]))
-    is_wall = state.grid[p_prime[0], p_prime[1]] == WALL
-    p_next = jnp.where(is_wall, p, p_prime)              # collision -> stay put
+    p_next = _dest_cell(p, action, state.grid, cfg)
+    # dynamic cost uses the visit count BEFORE this entry: 1st visit -> base, 2nd -> 2*base, ...
+    cost = cfg.base_cost * (1.0 + state.visit_counts[p_next[0], p_next[1]].astype(jnp.float32))
     visit_counts = state.visit_counts.at[p_next[0], p_next[1]].add(1)
-    return state.replace(agent_pos=p_next, visit_counts=visit_counts)
+    return state.replace(agent_pos=p_next, visit_counts=visit_counts, energy=state.energy - cost)
 
 
 def step(state: SearchState, action: jax.Array, cfg: EnvConfig):
     """One environment step. Returns (next_state, reward, done).
 
     Math:
-        reached = (p_next == goal)
-        done    = reached | (step_count+1 >= max_steps)
-        reward  = R_goal * reached - time_penalty
+        reached   = (p_next == goal)
+        exhausted = (energy <= 0)                          # budget spent -> failure
+        done      = reached | (step+1 >= max_steps) | exhausted
+        reward    = R_goal*reached - time_penalty + lambda_budget*(max(energy,0)/B0)
     """
     moved = apply_action(state, action, cfg)
     step_count = moved.step_count + jnp.int32(1)
     reached = jnp.all(moved.agent_pos == moved.goal_pos)
     timeout = step_count >= cfg.max_steps
-    done = reached | timeout
-    reward = cfg.r_goal * reached.astype(jnp.float32) - cfg.time_penalty
+    exhausted = moved.energy <= 0.0
+    done = reached | timeout | exhausted
+    budget_term = cfg.lambda_budget * (jnp.maximum(moved.energy, 0.0) / cfg.b0)
+    reward = cfg.r_goal * reached.astype(jnp.float32) - cfg.time_penalty + budget_term
     next_state = moved.replace(step_count=step_count, done=done)
     return next_state, reward, done
 

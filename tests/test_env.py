@@ -51,6 +51,7 @@ def empty_state(agent, goal) -> SearchState:
         agent_pos=jnp.array(agent, jnp.int32),
         goal_pos=jnp.array(goal, jnp.int32),
         visit_counts=jnp.zeros((H, W), jnp.int32),
+        energy=jnp.float32(cfg.b0),
         step_count=jnp.int32(0),
         done=jnp.bool_(False),
         key=jax.random.PRNGKey(0),
@@ -134,6 +135,40 @@ def test_non_terminal_step_reward_is_time_penalty():
     _, r, d = _step(s, jnp.int32(3), cfg)
     assert bool(d) is False
     assert float(r) == pytest.approx(-cfg.time_penalty)
+
+
+# --------------------------------------------------------------------------- energy budget (Stage 2)
+def test_energy_starts_at_b0_and_decrements_by_base_cost():
+    s = empty_state((1, 1), (20, 20))
+    assert float(s.energy) == pytest.approx(cfg.b0)
+    ns, _, _ = _step(s, jnp.int32(3), cfg)  # into a fresh cell -> cost = base_cost*(1+0)
+    assert float(ns.energy) == pytest.approx(cfg.b0 - cfg.base_cost)
+
+
+def test_dynamic_cost_doubles_on_revisit():
+    """Re-entering a cell costs base_cost*(1+visit_count): 1st entry base, 2nd entry 2*base."""
+    s = empty_state((1, 1), (20, 20))
+    s1, _, _ = _step(s, jnp.int32(3), cfg)            # (1,1)->(1,2): fresh, cost base
+    s2, _, _ = _step(s1, jnp.int32(2), cfg)           # (1,2)->(1,1): fresh, cost base
+    s3, _, _ = _step(s2, jnp.int32(3), cfg)           # (1,1)->(1,2): REVISIT, cost base*(1+1)=2base
+    first_entry = float(s1.energy) - float(s2.energy)   # cost of entering (1,1) [fresh]
+    revisit = float(s2.energy) - float(s3.energy)       # cost of re-entering (1,2)
+    assert first_entry == pytest.approx(cfg.base_cost)
+    assert revisit == pytest.approx(2 * cfg.base_cost)
+
+
+def test_budget_exhaustion_ends_episode():
+    s = empty_state((1, 1), (20, 20)).replace(energy=jnp.float32(cfg.base_cost * 0.5))
+    ns, _, d = _step(s, jnp.int32(3), cfg)            # cost base > 0.5 energy -> exhausted
+    assert float(ns.energy) <= 0.0
+    assert bool(d) is True
+
+
+def test_action_costs_shape_and_base_on_fresh_grid():
+    s = empty_state((5, 5), (20, 20))
+    costs = np.asarray(E.action_costs(s, cfg))
+    assert costs.shape == (E.N_ACTIONS,)
+    assert np.allclose(costs, cfg.base_cost)         # all neighbors fresh (visit_count 0)
 
 
 # --------------------------------------------------------------------------- jit / vmap

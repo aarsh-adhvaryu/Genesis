@@ -24,7 +24,8 @@ class SearchState:
     grid: chex.Array          # (H, W) int8   — map: {0 empty, 1 wall, 2 goal}
     agent_pos: chex.Array     # (2,)  int32   — (row, col) of the agent
     goal_pos: chex.Array      # (2,)  int32   — (row, col) of the goal (cheap "reached?" check)
-    visit_counts: chex.Array  # (H, W) int32  — entries per cell (cost applied in Stage 2)
+    visit_counts: chex.Array  # (H, W) int32  — entries per cell; feeds dynamic cost (1+visit_count)
+    energy: chex.Array        # ()    float32 — remaining budget B_t (init B0); exhaustion ends episode
     step_count: chex.Array    # ()    int32   — steps taken this episode (drives max_steps timeout)
     done: chex.Array          # ()    bool_   — episode finished (reached goal or timed out)
     key: chex.Array           # (2,)  uint32  — per-episode PRNG key (reproducible, vmap-independent)
